@@ -1,6 +1,8 @@
 import streamlit as st
 import folium
+import requests
 from streamlit_folium import st_folium
+from streamlit_geolocation import streamlit_geolocation
 
 from routing import get_routes
 from route_analysis import analyze_route
@@ -25,43 +27,26 @@ st.markdown(
     """
     <style>
 
-    /* ==============================================
-       MAIN BACKGROUND
-       ============================================== */
-
+    /* Main background */
     .stApp {
         background: #fff0f6;
     }
 
-
-    /* ==============================================
-       CONTENT WIDTH / SPACING
-       ============================================== */
-
+    /* Main content */
     .block-container {
         padding-top: 2rem;
         padding-bottom: 3rem;
         max-width: 1200px;
     }
 
-
-    /* ==============================================
-       ALL MAIN TEXT
-       ============================================== */
-
-    body,
+    /* Main text */
     p,
     label,
-    span,
-    div {
-        color: #000000;
+    span {
+        color: #000000 !important;
     }
 
-
-    /* ==============================================
-       HEADINGS
-       ============================================== */
-
+    /* Headings */
     h1,
     h2,
     h3,
@@ -72,22 +57,14 @@ st.markdown(
         font-weight: 800 !important;
     }
 
-
-    /* ==============================================
-       MAIN TITLE
-       ============================================== */
-
+    /* Main title */
     h1 {
         font-size: 3rem !important;
         text-align: center;
         margin-bottom: 0.3rem;
     }
 
-
-    /* ==============================================
-       BUTTON
-       ============================================== */
-
+    /* Buttons */
     .stButton > button {
         width: 100%;
         border-radius: 14px;
@@ -100,17 +77,12 @@ st.markdown(
         transition: 0.2s;
     }
 
-
     .stButton > button:hover {
         background: #b94173;
         color: #ffffff !important;
     }
 
-
-    /* ==============================================
-       METRIC CARDS
-       ============================================== */
-
+    /* Metric cards */
     [data-testid="stMetric"] {
         background: rgba(255, 255, 255, 0.92);
         padding: 1rem;
@@ -119,88 +91,52 @@ st.markdown(
         box-shadow: 0 4px 12px rgba(130, 60, 90, 0.08);
     }
 
-
     [data-testid="stMetricLabel"] {
         color: #000000 !important;
     }
-
 
     [data-testid="stMetricValue"] {
         color: #000000 !important;
     }
 
-
     [data-testid="stMetricDelta"] {
         color: #000000 !important;
     }
 
-
-    /* ==============================================
-       INPUT LABELS
-       ============================================== */
-
-    .stNumberInput label {
-        color: #000000 !important;
-        font-weight: 600;
-    }
-
-
-    /* ==============================================
-       INPUT BOXES
-       ============================================== */
-
+    /* Text inputs */
     input {
         border-radius: 10px !important;
         color: #000000 !important;
         background: #ffffff !important;
     }
 
+    /* Text input labels */
+    .stTextInput label,
+    .stNumberInput label,
+    .stCheckbox label {
+        color: #000000 !important;
+        font-weight: 600;
+    }
 
-    /* ==============================================
-       INPUT VALUE
-       ============================================== */
-
-    input[type="number"] {
+    /* Checkbox text */
+    .stCheckbox p {
         color: #000000 !important;
     }
 
-
-    /* ==============================================
-       ALERTS
-       ============================================== */
-
-    [data-testid="stAlert"] {
-        border-radius: 12px;
-    }
-
-
-    /* ==============================================
-       DIVIDERS
-       ============================================== */
-
-    hr {
-        margin-top: 1.5rem;
-        margin-bottom: 1.5rem;
-    }
-
-
-    /* ==============================================
-       CAPTIONS
-       ============================================== */
-
+    /* Captions */
     .stCaption {
         color: #000000 !important;
     }
 
-
-    /* ==============================================
-       MARKDOWN TEXT
-       ============================================== */
-
+    /* Markdown */
     [data-testid="stMarkdownContainer"] {
         color: #000000 !important;
     }
 
+    /* Alerts */
+    [data-testid="stAlert"] {
+        border-radius: 12px;
+    }
 
     </style>
     """,
@@ -214,6 +150,59 @@ st.markdown(
 
 if "analysis_results" not in st.session_state:
     st.session_state.analysis_results = None
+
+if "start_location" not in st.session_state:
+    st.session_state.start_location = None
+
+if "end_location" not in st.session_state:
+    st.session_state.end_location = None
+
+
+# ==================================================
+# GEOCODING FUNCTION
+# ==================================================
+
+@st.cache_data(ttl=3600)
+def geocode_place(place):
+    """
+    Convert a place/address in Bengaluru into
+    latitude and longitude using OpenStreetMap Nominatim.
+    """
+
+    url = "https://nominatim.openstreetmap.org/search"
+
+    params = {
+        "q": f"{place}, Bengaluru, Karnataka, India",
+        "format": "jsonv2",
+        "limit": 1
+    }
+
+    headers = {
+        "User-Agent": "SafeRouteAI/1.0"
+    }
+
+    response = requests.get(
+        url,
+        params=params,
+        headers=headers,
+        timeout=15
+    )
+
+    response.raise_for_status()
+
+    results = response.json()
+
+    if not results:
+        return None
+
+    return {
+        "latitude": float(results[0]["lat"]),
+        "longitude": float(results[0]["lon"]),
+        "display_name": results[0].get(
+            "display_name",
+            place
+        )
+    }
 
 
 # ==================================================
@@ -250,18 +239,53 @@ with col1:
 
     st.markdown("### Starting Point")
 
-    start_lat = st.number_input(
-        "Start Latitude",
-        value=12.9784,
-        format="%.6f"
+    use_current_location = st.checkbox(
+        "📱 Use My Current Location"
     )
 
-    start_lon = st.number_input(
-        "Start Longitude",
-        value=77.5696,
-        format="%.6f"
-    )
+    if use_current_location:
 
+        current_location = streamlit_geolocation()
+
+        if (
+            current_location
+            and current_location.get("latitude") is not None
+            and current_location.get("longitude") is not None
+        ):
+
+            st.success(
+                "✅ Current location detected."
+            )
+
+            start_lat = float(
+                current_location["latitude"]
+            )
+
+            start_lon = float(
+                current_location["longitude"]
+            )
+
+            start_place = "Current Location"
+
+        else:
+
+            st.warning(
+                "Please allow location access in your browser."
+            )
+
+            start_lat = None
+            start_lon = None
+            start_place = ""
+
+    else:
+
+        start_place = st.text_input(
+            "Enter starting location",
+            placeholder="Example: Bangalore Palace"
+        )
+
+        start_lat = None
+        start_lon = None
 
 # ==================================================
 # DESTINATION
@@ -271,17 +295,15 @@ with col2:
 
     st.markdown("### Destination")
 
-    end_lat = st.number_input(
-        "Destination Latitude",
-        value=12.9756,
-        format="%.6f"
+    end_place = st.text_input(
+        "Enter destination",
+        placeholder="Example: Koramangala 5th Block"
     )
 
-    end_lon = st.number_input(
-        "Destination Longitude",
-        value=77.6069,
-        format="%.6f"
-    )
+
+st.caption(
+    "Enter a place or address in Bengaluru, or use your current location."
+)
 
 
 # ==================================================
@@ -295,21 +317,134 @@ if st.button(
 
     try:
 
-        st.info(
-            "Generating and analyzing available routes..."
+        # ==================================================
+        # DETERMINE START LOCATION
+        # ==================================================
+
+        if use_current_location:
+
+            if (
+                start_lat is None
+                or start_lon is None
+            ):
+
+                st.error(
+                    "Please allow location access "
+                    "or enter a starting location manually."
+                )
+
+                st.stop()
+
+            start_location = {
+                "latitude": start_lat,
+                "longitude": start_lon,
+                "display_name": "Current Location"
+            }
+
+        else:
+
+            if not start_place.strip():
+
+                st.error(
+                    "Please enter a starting location."
+                )
+
+                st.stop()
+
+            with st.spinner(
+                "Finding your starting location..."
+            ):
+
+                start_location = geocode_place(
+                    start_place.strip()
+                )
+
+            if start_location is None:
+
+                st.error(
+                    f"Could not find the starting location: "
+                    f"{start_place}"
+                )
+
+                st.stop()
+
+
+        # ==================================================
+        # DETERMINE DESTINATION
+        # ==================================================
+
+        if not end_place.strip():
+
+            st.error(
+                "Please enter a destination."
+            )
+
+            st.stop()
+
+        with st.spinner(
+            "Finding your destination..."
+        ):
+
+            end_location = geocode_place(
+                end_place.strip()
+            )
+
+        if end_location is None:
+
+            st.error(
+                f"Could not find the destination: "
+                f"{end_place}"
+            )
+
+            st.stop()
+
+
+        # ==================================================
+        # GET FINAL COORDINATES
+        # ==================================================
+
+        start_lat = start_location["latitude"]
+        start_lon = start_location["longitude"]
+
+        end_lat = end_location["latitude"]
+        end_lon = end_location["longitude"]
+
+
+        # ==================================================
+        # SAVE LOCATIONS
+        # ==================================================
+
+        st.session_state.start_location = start_location
+        st.session_state.end_location = end_location
+
+
+        # ==================================================
+        # SHOW RESOLVED LOCATIONS
+        # ==================================================
+
+        st.success(
+            f"Start: {start_location['display_name']}"
+        )
+
+        st.success(
+            f"Destination: {end_location['display_name']}"
         )
 
 
-        # ----------------------------------------------
+        # ==================================================
         # GET ROUTES
-        # ----------------------------------------------
+        # ==================================================
 
-        route_data = get_routes(
-            start_lon,
-            start_lat,
-            end_lon,
-            end_lat
-        )
+        with st.spinner(
+            "Generating and analyzing routes..."
+        ):
+
+            route_data = get_routes(
+                start_lon,
+                start_lat,
+                end_lon,
+                end_lat
+            )
 
 
         routes = route_data.get(
@@ -345,36 +480,36 @@ if st.button(
             ]
 
 
-            # ------------------------------------------
-            # DISTANCE
-            # ------------------------------------------
+            # ----------------------------------------------
+            # Distance
+            # ----------------------------------------------
 
             distance = (
                 summary["distance"] / 1000
             )
 
 
-            # ------------------------------------------
-            # TRAVEL TIME
-            # ------------------------------------------
+            # ----------------------------------------------
+            # Travel time
+            # ----------------------------------------------
 
             duration = (
                 summary["duration"] / 60
             )
 
 
-            # ------------------------------------------
-            # SAFETY ANALYSIS
-            # ------------------------------------------
+            # ----------------------------------------------
+            # Safety analysis
+            # ----------------------------------------------
 
             safety = analyze_route(
                 route
             )
 
 
-            # ==================================================
+            # ==============================================
             # DISTANCE SCORE
-            # ==================================================
+            # ==============================================
 
             distance_score = max(
                 0,
@@ -385,9 +520,9 @@ if st.button(
             )
 
 
-            # ==================================================
+            # ==============================================
             # TIME SCORE
-            # ==================================================
+            # ==============================================
 
             time_score = max(
                 0,
@@ -398,9 +533,9 @@ if st.button(
             )
 
 
-            # ==================================================
+            # ==============================================
             # FINAL ROUTE SCORE
-            # ==================================================
+            # ==============================================
 
             final_score = (
                 safety["safety_score"] * 0.80
@@ -409,78 +544,63 @@ if st.button(
             )
 
 
-            # ==================================================
+            # ==============================================
             # STORE RESULTS
-            # ==================================================
+            # ==============================================
 
             results.append(
                 {
                     "route_number": index + 1,
-
                     "route": route,
-
                     "distance": round(
                         distance,
                         2
                     ),
-
                     "duration": round(
                         duration,
                         2
                     ),
-
                     "safety_score": round(
                         safety["safety_score"],
                         2
                     ),
-
                     "crime_safety_score": round(
                         safety["crime_safety_score"],
                         2
                     ),
-
                     "police_score": round(
                         safety["police_score"],
                         2
                     ),
-
                     "hospital_score": round(
                         safety["hospital_score"],
                         2
                     ),
-
                     "average_police_distance": round(
                         safety["average_police_distance"],
                         3
                     ),
-
                     "average_hospital_distance": round(
                         safety["average_hospital_distance"],
                         3
                     ),
-
                     "worst_police_distance": round(
                         safety["worst_police_distance"],
                         3
                     ),
-
                     "worst_hospital_distance": round(
                         safety["worst_hospital_distance"],
                         3
                     ),
-
                     "risk": safety["risk"],
-
                     "crime_risk": safety.get(
                         "crime_risk",
                         None
                     ),
-
                     "final_score": round(
                         final_score,
                         2
                     ),
-
                     "points_analyzed": safety.get(
                         "points_analyzed",
                         0
@@ -511,6 +631,19 @@ if st.button(
         )
 
 
+    except requests.RequestException as error:
+
+        st.session_state.analysis_results = None
+
+        st.error(
+            "❌ Location search failed."
+        )
+
+        st.code(
+            str(error)
+        )
+
+
     except Exception as error:
 
         st.session_state.analysis_results = None
@@ -530,9 +663,43 @@ if st.button(
 
 if st.session_state.analysis_results:
 
-    results = st.session_state.analysis_results
+    results = (
+        st.session_state.analysis_results
+    )
 
     recommended = results[0]
+
+
+    # ==================================================
+    # GET SAVED LOCATIONS
+    # ==================================================
+
+    start_location = (
+        st.session_state.start_location
+    )
+
+    end_location = (
+        st.session_state.end_location
+    )
+
+
+    if (
+        start_location is None
+        or end_location is None
+    ):
+
+        st.error(
+            "Location information is unavailable."
+        )
+
+        st.stop()
+
+
+    start_lat = start_location["latitude"]
+    start_lon = start_location["longitude"]
+
+    end_lat = end_location["latitude"]
+    end_lon = end_location["longitude"]
 
 
     # ==================================================
@@ -542,7 +709,6 @@ if st.session_state.analysis_results:
     st.subheader(
         "⭐ Safest Recommended Route"
     )
-
 
     st.success(
         f"Route {recommended['route_number']} "
@@ -635,7 +801,7 @@ if st.session_state.analysis_results:
 
 
     # ==================================================
-    # INTERACTIVE MAP
+    # MAP
     # ==================================================
 
     st.subheader(
@@ -700,7 +866,7 @@ if st.session_state.analysis_results:
 
 
         # ----------------------------------------------
-        # RECOMMENDED ROUTE
+        # Route styling
         # ----------------------------------------------
 
         if index == 0:
@@ -708,7 +874,6 @@ if st.session_state.analysis_results:
             route_color = "green"
             route_weight = 8
             route_opacity = 0.95
-
 
         else:
 
@@ -730,7 +895,7 @@ if st.session_state.analysis_results:
 
 
         # ----------------------------------------------
-        # POPUP
+        # Popup
         # ----------------------------------------------
 
         popup = (
@@ -753,10 +918,6 @@ if st.session_state.analysis_results:
             f"{item['final_score']}/100"
         )
 
-
-        # ----------------------------------------------
-        # DRAW ROUTE
-        # ----------------------------------------------
 
         folium.PolyLine(
             points,
@@ -781,7 +942,10 @@ if st.session_state.analysis_results:
             start_lon
         ],
         tooltip="START",
-        popup="Starting Point",
+        popup=(
+            f"Starting Point: "
+            f"{start_location['display_name']}"
+        ),
         icon=folium.Icon(
             color="green"
         )
@@ -798,7 +962,10 @@ if st.session_state.analysis_results:
             end_lon
         ],
         tooltip="DESTINATION",
-        popup="Destination",
+        popup=(
+            f"Destination: "
+            f"{end_location['display_name']}"
+        ),
         icon=folium.Icon(
             color="red"
         )
@@ -806,7 +973,7 @@ if st.session_state.analysis_results:
 
 
     # ==================================================
-    # MAP BOUNDS
+    # FIT MAP
     # ==================================================
 
     if all_points:
@@ -837,7 +1004,9 @@ if st.session_state.analysis_results:
     )
 
 
-    for index, item in enumerate(results):
+    for index, item in enumerate(
+        results
+    ):
 
         if index == 0:
 
@@ -920,10 +1089,11 @@ if st.session_state.analysis_results:
 
 
 # ==================================================
-# DISCLAIMER
+# FOOTER / DISCLAIMER
 # ==================================================
 
 st.caption(
+    "Location search uses OpenStreetMap Nominatim. "
     "Safety scores are comparative estimates and do not "
     "guarantee personal safety. The current system uses "
     "aggregate crime information together with geographic "
