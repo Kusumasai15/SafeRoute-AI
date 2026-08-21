@@ -1,4 +1,4 @@
-﻿altair==6.2.2
+altair==6.2.2
 anyio==4.14.2
 attrs==26.1.0
 blinker==1.9.0
@@ -48,3 +48,11 @@ watchdog==6.0.0
 websockets==16.1.1
 xyzservices==2026.3.0
 streamlit-geolocation
+requests
+streamlit
+folium
+streamlit-folium
+pandas
+scikit-learn
+joblib
+streamlit-searchbox
