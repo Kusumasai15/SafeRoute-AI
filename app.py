@@ -1,16 +1,38 @@
+import os
+
+import requests
 import streamlit as st
 import folium
-import requests
+
+from dotenv import load_dotenv
 from streamlit_folium import st_folium
+from streamlit_searchbox import st_searchbox
 from streamlit_geolocation import streamlit_geolocation
 
-from routing import get_routes
-from route_analysis import analyze_route
+
+# ============================================================
+# LOAD LOCAL .ENV
+# ============================================================
+
+load_dotenv()
 
 
-# ==================================================
+# ============================================================
+# IMPORT PROJECT MODULES
+# ============================================================
+
+try:
+    from routing import get_routes
+    from route_analysis import analyze_route
+
+except ModuleNotFoundError:
+    from core.routing import get_routes
+    from core.route_analysis import analyze_route
+
+
+# ============================================================
 # PAGE CONFIGURATION
-# ==================================================
+# ============================================================
 
 st.set_page_config(
     page_title="SafeRoute AI",
@@ -19,34 +41,38 @@ st.set_page_config(
 )
 
 
-# ==================================================
-# BABY-PINK THEME + BLACK TEXT
-# ==================================================
+# ============================================================
+# CUSTOM THEME
+# ============================================================
 
 st.markdown(
     """
     <style>
 
-    /* Main background */
+    /* =========================================
+       BACKGROUND
+       ========================================= */
+
     .stApp {
         background: #fff0f6;
     }
 
-    /* Main content */
+
+    /* =========================================
+       CONTENT
+       ========================================= */
+
     .block-container {
+        max-width: 1250px;
         padding-top: 2rem;
         padding-bottom: 3rem;
-        max-width: 1200px;
     }
 
-    /* Main text */
-    p,
-    label,
-    span {
-        color: #000000 !important;
-    }
 
-    /* Headings */
+    /* =========================================
+       HEADINGS
+       ========================================= */
+
     h1,
     h2,
     h3,
@@ -57,86 +83,105 @@ st.markdown(
         font-weight: 800 !important;
     }
 
-    /* Main title */
+
     h1 {
         font-size: 3rem !important;
         text-align: center;
-        margin-bottom: 0.3rem;
+        margin-bottom: 0.4rem;
     }
 
-    /* Buttons */
+
+    /* =========================================
+       NORMAL TEXT
+       ========================================= */
+
+    p,
+    label {
+        color: #000000 !important;
+    }
+
+
+    [data-testid="stMarkdownContainer"] {
+        color: #000000 !important;
+    }
+
+
+    /* =========================================
+       NORMAL STREAMLIT BUTTONS
+       ========================================= */
+
     .stButton > button {
         width: 100%;
         border-radius: 14px;
         border: none;
-        padding: 0.8rem 1rem;
-        font-size: 1.05rem;
-        font-weight: 700;
         background: #d85c91;
         color: #ffffff !important;
+        font-weight: 700;
+        padding: 0.8rem 1rem;
         transition: 0.2s;
     }
+
 
     .stButton > button:hover {
         background: #b94173;
         color: #ffffff !important;
     }
 
-    /* Metric cards */
+
+    /* =========================================
+       LINK BUTTONS
+       ========================================= */
+
+    .stLinkButton > a {
+        width: 100%;
+        color: #ffffff !important;
+        background: #d85c91 !important;
+        border-radius: 14px !important;
+        font-weight: 700 !important;
+        text-decoration: none !important;
+        border: none !important;
+        padding: 0.8rem 1rem !important;
+        transition: 0.2s;
+    }
+
+
+    .stLinkButton > a:hover {
+        color: #ffffff !important;
+        background: #b94173 !important;
+        text-decoration: none !important;
+    }
+
+
+    /* =========================================
+       METRIC CARDS
+       ========================================= */
+
     [data-testid="stMetric"] {
-        background: rgba(255, 255, 255, 0.92);
-        padding: 1rem;
-        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.94);
         border: 1px solid #f3c4d7;
+        border-radius: 14px;
+        padding: 1rem;
         box-shadow: 0 4px 12px rgba(130, 60, 90, 0.08);
     }
 
-    [data-testid="stMetricLabel"] {
-        color: #000000 !important;
-    }
 
-    [data-testid="stMetricValue"] {
-        color: #000000 !important;
-    }
-
+    [data-testid="stMetricLabel"],
+    [data-testid="stMetricValue"],
     [data-testid="stMetricDelta"] {
         color: #000000 !important;
     }
 
-    /* Text inputs */
+
+    /* =========================================
+       INPUTS
+       ========================================= */
+
     input {
-        border-radius: 10px !important;
         color: #000000 !important;
         background: #ffffff !important;
+        border-radius: 10px !important;
     }
 
-    /* Text input labels */
-    .stTextInput label,
-    .stNumberInput label,
-    .stCheckbox label {
-        color: #000000 !important;
-        font-weight: 600;
-    }
-
-    /* Checkbox text */
-    .stCheckbox p {
-        color: #000000 !important;
-    }
-
-    /* Captions */
-    .stCaption {
-        color: #000000 !important;
-    }
-
-    /* Markdown */
-    [data-testid="stMarkdownContainer"] {
-        color: #000000 !important;
-    }
-
-    /* Alerts */
-    [data-testid="stAlert"] {
-        border-radius: 12px;
-    }
 
     </style>
     """,
@@ -144,307 +189,670 @@ st.markdown(
 )
 
 
-# ==================================================
+# ============================================================
 # SESSION STATE
-# ==================================================
-
-if "analysis_results" not in st.session_state:
-    st.session_state.analysis_results = None
+# ============================================================
 
 if "start_location" not in st.session_state:
     st.session_state.start_location = None
+
 
 if "end_location" not in st.session_state:
     st.session_state.end_location = None
 
 
-# ==================================================
-# GEOCODING FUNCTION
-# ==================================================
+if "current_location" not in st.session_state:
+    st.session_state.current_location = None
 
-@st.cache_data(ttl=3600)
-def geocode_place(place):
-    """
-    Convert a place/address in Bengaluru into
-    latitude and longitude using OpenStreetMap Nominatim.
-    """
 
-    url = "https://nominatim.openstreetmap.org/search"
+if "analysis_results" not in st.session_state:
+    st.session_state.analysis_results = None
+
+
+# ============================================================
+# OPENROUTESERVICE API KEY
+# ============================================================
+
+def get_ors_key():
+
+    # Local VS Code -> .env
+    local_key = os.getenv("ORS_API_KEY")
+
+    if local_key:
+        return local_key.strip()
+
+
+    # Streamlit Cloud -> Secrets
+    try:
+
+        cloud_key = st.secrets["ORS_API_KEY"]
+
+        if cloud_key:
+            return str(
+                cloud_key
+            ).strip()
+
+    except Exception:
+        pass
+
+
+    return None
+
+
+# ============================================================
+# LIVE LOCATION SEARCH
+# ============================================================
+
+def search_places(searchterm):
+
+    searchterm = searchterm.strip()
+
+
+    if len(searchterm) < 2:
+        return []
+
+
+    api_key = get_ors_key()
+
+
+    if not api_key:
+        return []
+
+
+    url = (
+        "https://api.openrouteservice.org/"
+        "geocode/search"
+    )
+
 
     params = {
-        "q": f"{place}, Bengaluru, Karnataka, India",
-        "format": "jsonv2",
-        "limit": 1
+        "api_key": api_key,
+        "text": searchterm,
+        "size": 10,
+        "boundary.country": "IND",
+
+        # Bias results toward Bengaluru
+        "focus.point.lat": 12.9716,
+        "focus.point.lon": 77.5946,
     }
 
+
     headers = {
+        "Accept": "application/json",
         "User-Agent": "SafeRouteAI/1.0"
     }
 
-    response = requests.get(
-        url,
-        params=params,
-        headers=headers,
-        timeout=15
+
+    try:
+
+        response = requests.get(
+            url,
+            params=params,
+            headers=headers,
+            timeout=10
+        )
+
+
+        if response.status_code != 200:
+            return []
+
+
+        data = response.json()
+
+
+    except (
+        requests.RequestException,
+        ValueError
+    ):
+
+        return []
+
+
+    candidates = []
+
+
+    for feature in data.get(
+        "features",
+        []
+    ):
+
+        properties = feature.get(
+            "properties",
+            {}
+        )
+
+
+        geometry = feature.get(
+            "geometry",
+            {}
+        )
+
+
+        coordinates = geometry.get(
+            "coordinates"
+        )
+
+
+        if (
+            not coordinates
+            or len(coordinates) < 2
+        ):
+            continue
+
+
+        label = properties.get(
+            "label",
+            ""
+        )
+
+
+        if not label:
+            continue
+
+
+        country = str(
+            properties.get(
+                "country",
+                ""
+            )
+        ).lower()
+
+
+        region = str(
+            properties.get(
+                "region",
+                ""
+            )
+        ).lower()
+
+
+        locality = str(
+            properties.get(
+                "locality",
+                ""
+            )
+        ).lower()
+
+
+        county = str(
+            properties.get(
+                "county",
+                ""
+            )
+        ).lower()
+
+
+        layer = str(
+            properties.get(
+                "layer",
+                ""
+            )
+        ).lower()
+
+
+        postcode = str(
+            properties.get(
+                "postalcode",
+                ""
+            )
+        ).strip()
+
+
+        # ============================================
+        # INDIA ONLY
+        # ============================================
+
+        if country and country != "india":
+            continue
+
+
+        # ============================================
+        # RANK BENGALURU RESULTS
+        # ============================================
+
+        score = 0
+
+
+        if region == "karnataka":
+            score += 50
+
+
+        if "bangalore" in locality:
+            score += 60
+
+
+        if "bengaluru" in locality:
+            score += 60
+
+
+        if "bangalore" in county:
+            score += 30
+
+
+        if "bengaluru" in county:
+            score += 30
+
+
+        lower_label = label.lower()
+
+
+        if "bangalore" in lower_label:
+            score += 20
+
+
+        if "bengaluru" in lower_label:
+            score += 20
+
+
+        if layer == "neighbourhood":
+            score += 15
+
+
+        elif layer == "locality":
+            score += 12
+
+
+        elif layer == "borough":
+            score += 10
+
+
+        elif layer == "street":
+            score += 8
+
+
+        elif layer == "venue":
+            score += 5
+
+
+        try:
+
+            latitude = float(
+                coordinates[1]
+            )
+
+            longitude = float(
+                coordinates[0]
+            )
+
+        except (
+            TypeError,
+            ValueError
+        ):
+
+            continue
+
+
+        candidates.append(
+            {
+                "score": score,
+                "label": label,
+                "postcode": postcode,
+                "latitude": latitude,
+                "longitude": longitude,
+            }
+        )
+
+
+    # ================================================
+    # SORT BEST RESULTS FIRST
+    # ================================================
+
+    candidates.sort(
+        key=lambda item: item["score"],
+        reverse=True
     )
 
-    response.raise_for_status()
 
-    results = response.json()
+    suggestions = []
 
-    if not results:
-        return None
 
-    return {
-        "latitude": float(results[0]["lat"]),
-        "longitude": float(results[0]["lon"]),
-        "display_name": results[0].get(
-            "display_name",
-            place
+    seen = set()
+
+
+    for item in candidates:
+
+        unique_key = (
+            item["label"],
+            round(item["latitude"], 6),
+            round(item["longitude"], 6)
         )
-    }
 
 
-# ==================================================
+        if unique_key in seen:
+            continue
+
+
+        seen.add(unique_key)
+
+
+        if item["postcode"]:
+
+            display_text = (
+                f"{item['label']} "
+                f"• PIN {item['postcode']}"
+            )
+
+        else:
+
+            display_text = item["label"]
+
+
+        location_data = {
+            "label": item["label"],
+            "postcode": item["postcode"],
+            "latitude": item["latitude"],
+            "longitude": item["longitude"],
+        }
+
+
+        suggestions.append(
+            (
+                display_text,
+                location_data
+            )
+        )
+
+
+        if len(suggestions) >= 6:
+            break
+
+
+    return suggestions
+
+
+# ============================================================
 # HEADER
-# ==================================================
+# ============================================================
 
-st.title("🛡️ SafeRoute AI")
+st.title(
+    "🛡️ SafeRoute AI"
+)
+
 
 st.subheader(
     "Smart Route Recommendation for Safer Journeys"
 )
 
+
 st.write(
-    "Compare alternative routes using crime risk, "
-    "police proximity, hospital proximity, distance, "
-    "and travel time."
+    "Search for your starting point and destination. "
+    "You can also use your current location as the source."
 )
 
 
-# ==================================================
+# ============================================================
 # JOURNEY DETAILS
-# ==================================================
+# ============================================================
 
-st.subheader("📍 Journey Details")
+st.subheader(
+    "📍 Journey Details"
+)
 
-col1, col2 = st.columns(2)
+
+source_col, destination_col = st.columns(2)
 
 
-# ==================================================
-# STARTING POINT
-# ==================================================
+# ============================================================
+# SOURCE / STARTING POINT
+# ============================================================
 
-with col1:
+with source_col:
 
-    st.markdown("### Starting Point")
-
-    use_current_location = st.checkbox(
-        "📱 Use My Current Location"
+    st.markdown(
+        "### Starting Point"
     )
 
-    if use_current_location:
 
-        current_location = streamlit_geolocation()
+    start_location = st_searchbox(
+        search_places,
+        placeholder="Start typing a place or area...",
+        label=None,
+        key="start_search",
+        debounce=500,
+        clear_on_submit=False,
+        edit_after_submit="option",
+    )
 
-        if (
-            current_location
-            and current_location.get("latitude") is not None
-            and current_location.get("longitude") is not None
-        ):
 
-            st.success(
-                "✅ Current location detected."
-            )
+    if start_location is not None:
 
-            start_lat = float(
-                current_location["latitude"]
-            )
-
-            start_lon = float(
-                current_location["longitude"]
-            )
-
-            start_place = "Current Location"
-
-        else:
-
-            st.warning(
-                "Please allow location access in your browser."
-            )
-
-            start_lat = None
-            start_lon = None
-            start_place = ""
-
-    else:
-
-        start_place = st.text_input(
-            "Enter starting location",
-            placeholder="Example: Bangalore Palace"
+        st.session_state.start_location = (
+            start_location
         )
 
-        start_lat = None
-        start_lon = None
 
-# ==================================================
-# DESTINATION
-# ==================================================
+    if st.session_state.start_location:
 
-with col2:
+        st.success(
+            f"Source: "
+            f"{st.session_state.start_location['label']}"
+        )
 
-    st.markdown("### Destination")
 
-    end_place = st.text_input(
-        "Enter destination",
-        placeholder="Example: Koramangala 5th Block"
+        if st.session_state.start_location.get(
+            "postcode"
+        ):
+
+            st.caption(
+                "PIN Code: "
+                + st.session_state.start_location[
+                    "postcode"
+                ]
+            )
+
+
+    # ========================================================
+    # CURRENT LOCATION
+    # ========================================================
+
+    st.markdown(
+        "### 📍 Use My Current Location"
     )
 
 
-st.caption(
-    "Enter a place or address in Bengaluru, or use your current location."
-)
+    st.caption(
+        "Allow your browser to access your location "
+        "to use it as the starting point."
+    )
 
 
-# ==================================================
+    # IMPORTANT:
+    # streamlit-geolocation 0.0.10 does NOT accept key=.
+    current_location_data = (
+        streamlit_geolocation()
+    )
+
+
+    if current_location_data:
+
+        latitude = current_location_data.get(
+            "latitude"
+        )
+
+        longitude = current_location_data.get(
+            "longitude"
+        )
+
+
+        if (
+            latitude is not None
+            and longitude is not None
+        ):
+
+            st.session_state.current_location = {
+                "latitude": float(latitude),
+                "longitude": float(longitude)
+            }
+
+
+            st.success(
+                "📍 Current location detected."
+            )
+
+
+            st.caption(
+                f"Lat: {latitude:.6f} | "
+                f"Lon: {longitude:.6f}"
+            )
+
+
+            if st.button(
+                "📍 Use Current Location as Start",
+                key="use_current_start",
+                use_container_width=True
+            ):
+
+                st.session_state.start_location = {
+                    "label": "📍 My Current Location",
+                    "postcode": "",
+                    "latitude": float(latitude),
+                    "longitude": float(longitude)
+                }
+
+
+                st.success(
+                    "Source: 📍 My Current Location"
+                )
+
+
+# ============================================================
+# DESTINATION
+# ============================================================
+
+with destination_col:
+
+    st.markdown(
+        "### Destination"
+    )
+
+
+    # --------------------------------------------------------
+    # KEEP DESTINATION SEARCH UNCHANGED
+    # --------------------------------------------------------
+
+    end_location = st_searchbox(
+        search_places,
+        placeholder="Start typing a destination...",
+        label=None,
+        key="end_search",
+        debounce=500,
+        clear_on_submit=False,
+        edit_after_submit="option",
+    )
+
+
+    if end_location is not None:
+
+        st.session_state.end_location = (
+            end_location
+        )
+
+
+    if st.session_state.end_location:
+
+        st.success(
+            "Destination selected."
+        )
+
+
+        st.caption(
+            st.session_state.end_location[
+                "label"
+            ]
+        )
+
+
+        if st.session_state.end_location.get(
+            "postcode"
+        ):
+
+            st.caption(
+                "PIN Code: "
+                + st.session_state.end_location[
+                    "postcode"
+                ]
+            )
+
+
+# ============================================================
 # FIND SAFEST ROUTE
-# ==================================================
+# ============================================================
+
+st.divider()
+
 
 if st.button(
     "🛡️ FIND SAFEST ROUTE",
     use_container_width=True
 ):
 
+    if not st.session_state.start_location:
+
+        st.error(
+            "Please select a starting point "
+            "or use your current location."
+        )
+
+        st.stop()
+
+
+    if not st.session_state.end_location:
+
+        st.error(
+            "Please select a destination "
+            "from the suggestions."
+        )
+
+        st.stop()
+
+
     try:
 
-        # ==================================================
-        # DETERMINE START LOCATION
-        # ==================================================
-
-        if use_current_location:
-
-            if (
-                start_lat is None
-                or start_lon is None
-            ):
-
-                st.error(
-                    "Please allow location access "
-                    "or enter a starting location manually."
-                )
-
-                st.stop()
-
-            start_location = {
-                "latitude": start_lat,
-                "longitude": start_lon,
-                "display_name": "Current Location"
-            }
-
-        else:
-
-            if not start_place.strip():
-
-                st.error(
-                    "Please enter a starting location."
-                )
-
-                st.stop()
-
-            with st.spinner(
-                "Finding your starting location..."
-            ):
-
-                start_location = geocode_place(
-                    start_place.strip()
-                )
-
-            if start_location is None:
-
-                st.error(
-                    f"Could not find the starting location: "
-                    f"{start_place}"
-                )
-
-                st.stop()
-
-
-        # ==================================================
-        # DETERMINE DESTINATION
-        # ==================================================
-
-        if not end_place.strip():
-
-            st.error(
-                "Please enter a destination."
-            )
-
-            st.stop()
-
-        with st.spinner(
-            "Finding your destination..."
-        ):
-
-            end_location = geocode_place(
-                end_place.strip()
-            )
-
-        if end_location is None:
-
-            st.error(
-                f"Could not find the destination: "
-                f"{end_place}"
-            )
-
-            st.stop()
-
-
-        # ==================================================
-        # GET FINAL COORDINATES
-        # ==================================================
-
-        start_lat = start_location["latitude"]
-        start_lon = start_location["longitude"]
-
-        end_lat = end_location["latitude"]
-        end_lon = end_location["longitude"]
-
-
-        # ==================================================
-        # SAVE LOCATIONS
-        # ==================================================
-
-        st.session_state.start_location = start_location
-        st.session_state.end_location = end_location
-
-
-        # ==================================================
-        # SHOW RESOLVED LOCATIONS
-        # ==================================================
-
-        st.success(
-            f"Start: {start_location['display_name']}"
-        )
-
-        st.success(
-            f"Destination: {end_location['display_name']}"
+        st.info(
+            "Generating and analyzing available routes..."
         )
 
 
-        # ==================================================
+        start = (
+            st.session_state.start_location
+        )
+
+
+        end = (
+            st.session_state.end_location
+        )
+
+
+        start_lat = start[
+            "latitude"
+        ]
+
+
+        start_lon = start[
+            "longitude"
+        ]
+
+
+        end_lat = end[
+            "latitude"
+        ]
+
+
+        end_lon = end[
+            "longitude"
+        ]
+
+
+        # ====================================================
         # GET ROUTES
-        # ==================================================
+        # ====================================================
 
-        with st.spinner(
-            "Generating and analyzing routes..."
-        ):
-
-            route_data = get_routes(
-                start_lon,
-                start_lat,
-                end_lon,
-                end_lat
-            )
+        route_data = get_routes(
+            start_lon,
+            start_lat,
+            end_lon,
+            end_lat
+        )
 
 
         routes = route_data.get(
@@ -456,8 +864,10 @@ if st.button(
         if not routes:
 
             st.error(
-                "No routes were returned by the routing service."
+                "No routes were returned by "
+                "the routing service."
             )
+
 
             st.session_state.analysis_results = None
 
@@ -467,180 +877,224 @@ if st.button(
         results = []
 
 
-        # ==================================================
+        # ====================================================
         # ANALYZE EACH ROUTE
-        # ==================================================
+        # ====================================================
 
-        for index, route in enumerate(routes):
+        for index, route in enumerate(
+            routes
+        ):
 
-            summary = route[
-                "properties"
-            ][
-                "summary"
-            ]
-
-
-            # ----------------------------------------------
-            # Distance
-            # ----------------------------------------------
-
-            distance = (
-                summary["distance"] / 1000
+            summary = (
+                route[
+                    "properties"
+                ][
+                    "summary"
+                ]
             )
 
 
-            # ----------------------------------------------
-            # Travel time
-            # ----------------------------------------------
-
-            duration = (
-                summary["duration"] / 60
+            distance_km = (
+                summary[
+                    "distance"
+                ]
+                / 1000
             )
 
 
-            # ----------------------------------------------
-            # Safety analysis
-            # ----------------------------------------------
+            duration_min = (
+                summary[
+                    "duration"
+                ]
+                / 60
+            )
+
 
             safety = analyze_route(
                 route
             )
 
 
-            # ==============================================
+            # ================================================
             # DISTANCE SCORE
-            # ==============================================
+            # ================================================
 
             distance_score = max(
                 0,
                 min(
                     100,
-                    100 - distance * 3
+                    100
+                    - distance_km * 3
                 )
             )
 
 
-            # ==============================================
+            # ================================================
             # TIME SCORE
-            # ==============================================
+            # ================================================
 
             time_score = max(
                 0,
                 min(
                     100,
-                    100 - duration * 2
+                    100
+                    - duration_min * 2
                 )
             )
 
 
-            # ==============================================
-            # FINAL ROUTE SCORE
-            # ==============================================
+            # ================================================
+            # FINAL SCORE
+            # ================================================
 
             final_score = (
-                safety["safety_score"] * 0.80
-                + time_score * 0.10
-                + distance_score * 0.10
+                safety[
+                    "safety_score"
+                ]
+                * 0.80
+
+                +
+
+                time_score
+                * 0.10
+
+                +
+
+                distance_score
+                * 0.10
             )
 
 
-            # ==============================================
-            # STORE RESULTS
-            # ==============================================
-
             results.append(
                 {
-                    "route_number": index + 1,
-                    "route": route,
-                    "distance": round(
-                        distance,
-                        2
-                    ),
-                    "duration": round(
-                        duration,
-                        2
-                    ),
-                    "safety_score": round(
-                        safety["safety_score"],
-                        2
-                    ),
-                    "crime_safety_score": round(
-                        safety["crime_safety_score"],
-                        2
-                    ),
-                    "police_score": round(
-                        safety["police_score"],
-                        2
-                    ),
-                    "hospital_score": round(
-                        safety["hospital_score"],
-                        2
-                    ),
-                    "average_police_distance": round(
-                        safety["average_police_distance"],
-                        3
-                    ),
-                    "average_hospital_distance": round(
-                        safety["average_hospital_distance"],
-                        3
-                    ),
-                    "worst_police_distance": round(
-                        safety["worst_police_distance"],
-                        3
-                    ),
-                    "worst_hospital_distance": round(
-                        safety["worst_hospital_distance"],
-                        3
-                    ),
-                    "risk": safety["risk"],
-                    "crime_risk": safety.get(
-                        "crime_risk",
-                        None
-                    ),
-                    "final_score": round(
-                        final_score,
-                        2
-                    ),
-                    "points_analyzed": safety.get(
-                        "points_analyzed",
-                        0
-                    )
+                    "route_number":
+                        index + 1,
+
+                    "route":
+                        route,
+
+                    "distance":
+                        round(
+                            distance_km,
+                            2
+                        ),
+
+                    "duration":
+                        round(
+                            duration_min,
+                            2
+                        ),
+
+                    "safety_score":
+                        round(
+                            safety[
+                                "safety_score"
+                            ],
+                            2
+                        ),
+
+                    "crime_safety_score":
+                        round(
+                            safety[
+                                "crime_safety_score"
+                            ],
+                            2
+                        ),
+
+                    "police_score":
+                        round(
+                            safety[
+                                "police_score"
+                            ],
+                            2
+                        ),
+
+                    "hospital_score":
+                        round(
+                            safety[
+                                "hospital_score"
+                            ],
+                            2
+                        ),
+
+                    "average_police_distance":
+                        round(
+                            safety[
+                                "average_police_distance"
+                            ],
+                            3
+                        ),
+
+                    "average_hospital_distance":
+                        round(
+                            safety[
+                                "average_hospital_distance"
+                            ],
+                            3
+                        ),
+
+                    "worst_police_distance":
+                        round(
+                            safety[
+                                "worst_police_distance"
+                            ],
+                            3
+                        ),
+
+                    "worst_hospital_distance":
+                        round(
+                            safety[
+                                "worst_hospital_distance"
+                            ],
+                            3
+                        ),
+
+                    "risk":
+                        safety[
+                            "risk"
+                        ],
+
+                    "crime_risk":
+                        safety.get(
+                            "crime_risk"
+                        ),
+
+                    "final_score":
+                        round(
+                            final_score,
+                            2
+                        ),
+
+                    "points_analyzed":
+                        safety.get(
+                            "points_analyzed",
+                            0
+                        )
                 }
             )
 
 
-        # ==================================================
+        # ====================================================
         # RANK ROUTES
-        # ==================================================
+        # ====================================================
 
         results.sort(
-            key=lambda x: x["final_score"],
+            key=lambda item:
+                item[
+                    "final_score"
+                ],
             reverse=True
         )
 
 
-        # ==================================================
-        # SAVE RESULTS
-        # ==================================================
-
-        st.session_state.analysis_results = results
+        st.session_state.analysis_results = (
+            results
+        )
 
 
         st.success(
-            f"✅ {len(results)} route(s) analyzed successfully."
-        )
-
-
-    except requests.RequestException as error:
-
-        st.session_state.analysis_results = None
-
-        st.error(
-            "❌ Location search failed."
-        )
-
-        st.code(
-            str(error)
+            f"✅ {len(results)} route(s) "
+            f"analyzed successfully."
         )
 
 
@@ -648,18 +1102,20 @@ if st.button(
 
         st.session_state.analysis_results = None
 
+
         st.error(
             "❌ Route analysis failed."
         )
+
 
         st.code(
             str(error)
         )
 
 
-# ==================================================
-# DISPLAY RESULTS
-# ==================================================
+# ============================================================
+# RESULTS
+# ============================================================
 
 if st.session_state.analysis_results:
 
@@ -667,59 +1123,24 @@ if st.session_state.analysis_results:
         st.session_state.analysis_results
     )
 
+
     recommended = results[0]
 
 
-    # ==================================================
-    # GET SAVED LOCATIONS
-    # ==================================================
-
-    start_location = (
-        st.session_state.start_location
-    )
-
-    end_location = (
-        st.session_state.end_location
-    )
-
-
-    if (
-        start_location is None
-        or end_location is None
-    ):
-
-        st.error(
-            "Location information is unavailable."
-        )
-
-        st.stop()
-
-
-    start_lat = start_location["latitude"]
-    start_lon = start_location["longitude"]
-
-    end_lat = end_location["latitude"]
-    end_lon = end_location["longitude"]
-
-
-    # ==================================================
+    # ========================================================
     # RECOMMENDED ROUTE
-    # ==================================================
+    # ========================================================
 
     st.subheader(
         "⭐ Safest Recommended Route"
     )
 
+
     st.success(
         f"Route {recommended['route_number']} "
-        f"has the best overall safety score among "
-        f"the available routes."
+        f"has the highest comparative safety score."
     )
 
-
-    # ==================================================
-    # PRIMARY METRICS
-    # ==================================================
 
     c1, c2, c3, c4 = st.columns(4)
 
@@ -756,9 +1177,9 @@ if st.session_state.analysis_results:
         )
 
 
-    # ==================================================
+    # ========================================================
     # SAFETY ANALYSIS
-    # ==================================================
+    # ========================================================
 
     st.subheader(
         "🛡️ Safety Analysis"
@@ -800,16 +1221,18 @@ if st.session_state.analysis_results:
         )
 
 
-    # ==================================================
+    # ========================================================
     # MAP
-    # ==================================================
+    # ========================================================
 
     st.subheader(
         "🗺️ Interactive Route Map"
     )
 
 
-    first_route = results[0]["route"]
+    first_route = results[0][
+        "route"
+    ]
 
 
     first_coordinates = (
@@ -838,16 +1261,19 @@ if st.session_state.analysis_results:
     all_points = []
 
 
-    # ==================================================
-    # DRAW ROUTES
-    # ==================================================
+    for index, item in enumerate(
+        results
+    ):
 
-    for index, item in enumerate(results):
 
         coordinates = (
-            item["route"]
-            ["geometry"]
-            ["coordinates"]
+            item[
+                "route"
+            ][
+                "geometry"
+            ][
+                "coordinates"
+            ]
         )
 
 
@@ -865,15 +1291,12 @@ if st.session_state.analysis_results:
         )
 
 
-        # ----------------------------------------------
-        # Route styling
-        # ----------------------------------------------
-
         if index == 0:
 
             route_color = "green"
             route_weight = 8
             route_opacity = 0.95
+
 
         else:
 
@@ -894,28 +1317,16 @@ if st.session_state.analysis_results:
             route_opacity = 0.55
 
 
-        # ----------------------------------------------
-        # Popup
-        # ----------------------------------------------
-
         popup = (
             f"<b>Route {item['route_number']}</b><br>"
-            f"Safety Score: "
-            f"{item['safety_score']}/100<br>"
-            f"Crime Safety: "
-            f"{item['crime_safety_score']}/100<br>"
-            f"Risk: "
-            f"{item['risk']}<br>"
-            f"Average Police Distance: "
-            f"{item['average_police_distance']} km<br>"
-            f"Average Hospital Distance: "
-            f"{item['average_hospital_distance']} km<br>"
-            f"Distance: "
-            f"{item['distance']} km<br>"
-            f"Travel Time: "
-            f"{item['duration']} min<br>"
-            f"Final Score: "
-            f"{item['final_score']}/100"
+            f"Safety: {item['safety_score']}/100<br>"
+            f"Crime: {item['crime_safety_score']}/100<br>"
+            f"Risk: {item['risk']}<br>"
+            f"Police: {item['average_police_distance']} km<br>"
+            f"Hospital: {item['average_hospital_distance']} km<br>"
+            f"Distance: {item['distance']} km<br>"
+            f"Time: {item['duration']} min<br>"
+            f"Final Score: {item['final_score']}/100"
         )
 
 
@@ -932,49 +1343,55 @@ if st.session_state.analysis_results:
         ).add_to(m)
 
 
-    # ==================================================
+    # ========================================================
     # START MARKER
-    # ==================================================
+    # ========================================================
 
     folium.Marker(
+
         [
             start_lat,
             start_lon
         ],
+
         tooltip="START",
+
         popup=(
-            f"Starting Point: "
-            f"{start_location['display_name']}"
+            "Starting Point<br>"
+            + start["label"]
         ),
+
         icon=folium.Icon(
-            color="green"
+            color="green",
+            icon="play"
         )
     ).add_to(m)
 
 
-    # ==================================================
+    # ========================================================
     # DESTINATION MARKER
-    # ==================================================
+    # ========================================================
 
     folium.Marker(
+
         [
             end_lat,
             end_lon
         ],
+
         tooltip="DESTINATION",
+
         popup=(
-            f"Destination: "
-            f"{end_location['display_name']}"
+            "Destination<br>"
+            + end["label"]
         ),
+
         icon=folium.Icon(
-            color="red"
+            color="red",
+            icon="flag"
         )
     ).add_to(m)
 
-
-    # ==================================================
-    # FIT MAP
-    # ==================================================
 
     if all_points:
 
@@ -982,10 +1399,6 @@ if st.session_state.analysis_results:
             all_points
         )
 
-
-    # ==================================================
-    # DISPLAY MAP
-    # ==================================================
 
     st_folium(
         m,
@@ -995,9 +1408,9 @@ if st.session_state.analysis_results:
     )
 
 
-    # ==================================================
+    # ========================================================
     # ROUTE COMPARISON
-    # ==================================================
+    # ========================================================
 
     st.subheader(
         "📊 Route Comparison"
@@ -1007,6 +1420,7 @@ if st.session_state.analysis_results:
     for index, item in enumerate(
         results
     ):
+
 
         if index == 0:
 
@@ -1075,12 +1489,9 @@ if st.session_state.analysis_results:
 
 
         st.caption(
-            f"Final Score: "
-            f"{item['final_score']}/100 | "
-            f"Police Score: "
-            f"{item['police_score']}/100 | "
-            f"Hospital Score: "
-            f"{item['hospital_score']}/100 | "
+            f"Final Score: {item['final_score']}/100 | "
+            f"Police Score: {item['police_score']}/100 | "
+            f"Hospital Score: {item['hospital_score']}/100 | "
             f"{item['points_analyzed']} route points analyzed"
         )
 
@@ -1088,14 +1499,170 @@ if st.session_state.analysis_results:
         st.divider()
 
 
-# ==================================================
-# FOOTER / DISCLAIMER
-# ==================================================
+# ============================================================
+# EMERGENCY SUPPORT
+# ============================================================
+
+st.subheader(
+    "🚨 Emergency Support"
+)
+
 
 st.caption(
-    "Location search uses OpenStreetMap Nominatim. "
+    "Quick access to police, nearby hospitals, "
+    "and your optional emergency contact."
+)
+
+
+em1, em2, em3 = st.columns(3)
+
+
+# ============================================================
+# POLICE
+# ============================================================
+
+with em1:
+
+    st.markdown(
+        "### 👮 Police"
+    )
+
+
+    st.write(
+        "Police assistance"
+    )
+
+
+    st.link_button(
+        "📞 CALL POLICE — 100",
+        "tel:100",
+        use_container_width=True
+    )
+
+
+# ============================================================
+# HOSPITAL
+# ============================================================
+
+with em2:
+
+    st.markdown(
+        "### 🏥 Hospital"
+    )
+
+
+    st.write(
+        "Find hospitals near your location"
+    )
+
+
+    hospital_search_url = (
+        "https://www.google.com/maps/search/"
+        "?api=1&query=hospitals+near+me"
+    )
+
+
+    st.link_button(
+        "🏥 FIND NEARBY HOSPITAL",
+        hospital_search_url,
+        use_container_width=True
+    )
+
+
+# ============================================================
+# OPTIONAL EMERGENCY CONTACT
+# ============================================================
+
+with em3:
+
+    st.markdown(
+        "### 🚨 My Emergency Contact"
+    )
+
+
+    emergency_number = st.text_input(
+        "Emergency contact number",
+        placeholder="Enter number",
+        key="emergency_contact"
+    )
+
+
+    if emergency_number.strip():
+
+        st.link_button(
+            "📞 CALL EMERGENCY CONTACT",
+            f"tel:{emergency_number.strip()}",
+            use_container_width=True
+        )
+
+
+# ============================================================
+# SHARE CURRENT LOCATION
+# ============================================================
+
+st.subheader(
+    "📤 Share Current Location"
+)
+
+
+if st.session_state.current_location:
+
+    current_lat = (
+        st.session_state.current_location[
+            "latitude"
+        ]
+    )
+
+
+    current_lon = (
+        st.session_state.current_location[
+            "longitude"
+        ]
+    )
+
+
+    maps_link = (
+        "https://www.google.com/maps/search/"
+        "?api=1"
+        f"&query={current_lat},{current_lon}"
+    )
+
+
+    st.text_input(
+        "Location Link",
+        value=maps_link,
+        key="location_link"
+    )
+
+
+    st.link_button(
+        "📍 OPEN CURRENT LOCATION",
+        maps_link,
+        use_container_width=True
+    )
+
+
+    st.caption(
+        "This creates a shareable snapshot of your current "
+        "location. It does not continuously track movement."
+    )
+
+
+else:
+
+    st.info(
+        "Detect your current location above to create "
+        "a location-sharing link."
+    )
+
+
+# ============================================================
+# DISCLAIMER
+# ============================================================
+
+st.caption(
     "Safety scores are comparative estimates and do not "
-    "guarantee personal safety. The current system uses "
-    "aggregate crime information together with geographic "
-    "police and hospital proximity."
+    "guarantee personal safety. Crime information is currently "
+    "based on aggregate data; police and hospital proximity "
+    "are calculated geographically."
 )
